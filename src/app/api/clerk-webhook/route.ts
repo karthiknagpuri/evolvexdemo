@@ -117,7 +117,7 @@ async function handleUserEvent(eventType: string, userData: any) {
   const { id, email_addresses, username, first_name, last_name, image_url } = userData;
   
   if (!id) {
-    throw new Error("User ID is required");
+    return { message: "User ID is required" };
   }
 
   const userProfile = {
@@ -140,7 +140,7 @@ async function handleUserEvent(eventType: string, userData: any) {
     
     if (error) {
       console.error("Error deleting user profile:", error);
-      throw error;
+      return { message: "Failed to delete user profile", error };
     }
     return { message: "User deleted successfully" };
   }
@@ -156,32 +156,24 @@ async function handleUserEvent(eventType: string, userData: any) {
     
     if (error) {
       console.error("Error upserting user profile:", error);
-      throw error;
+      return { message: "Failed to upsert user profile", error };
     }
     
     console.log("Successfully upserted user profile:", data);
     return { data, message: "User profile updated successfully" };
   } catch (error) {
     console.error("Failed to upsert user profile:", error);
-    // If the error is related to UUID format, try creating a new profile
-    const { data: newData, error: newError } = await supabase
-      .from("profiles")
-      .insert(userProfile)
-      .select()
-      .single();
-      
-    if (newError) {
-      console.error("Error creating new user profile:", newError);
-      throw newError;
-    }
-    
-    console.log("Successfully created new user profile:", newData);
-    return { data: newData, message: "User profile created successfully" };
+    return { message: "Internal server error", error };
   }
 }
 
 // Handle email-related events
 async function handleEmailEvent(eventType: string, emailData: any) {
+  if (!supabase) {
+    console.error("Supabase client not initialized");
+    return { message: "Supabase client not initialized" };
+  }
+
   if (eventType === "email.created") {
     console.log("Processing email event:", {
       id: emailData.id,
@@ -190,24 +182,32 @@ async function handleEmailEvent(eventType: string, emailData: any) {
       status: emailData.status,
     });
 
-    // Store email data in Supabase
-    const { data, error } = await supabase.from("emails").insert({
-      email_id: emailData.id,
-      user_id: emailData.user_id,
-      to_address: emailData.to_email_address,
-      subject: emailData.subject,
-      status: emailData.status,
-      type: emailData.type,
-      created_at: new Date().toISOString(),
-    });
+    try {
+      // Store email data in Supabase
+      const { data, error } = await supabase.from("emails").insert({
+        email_id: emailData.id,
+        user_id: emailData.user_id,
+        to_address: emailData.to_email_address,
+        subject: emailData.subject,
+        status: emailData.status,
+        type: emailData.type,
+        created_at: new Date().toISOString(),
+      });
 
-    if (error) {
-      console.error("Error storing email data:", error);
-      throw error;
+      if (error) {
+        console.error("Error storing email data:", error);
+        return { message: "Failed to store email data", error };
+      }
+
+      console.log("Successfully stored email data:", data);
+      return { data, message: "Email data stored successfully" };
+    } catch (error) {
+      console.error("Error in handleEmailEvent:", error);
+      return { message: "Internal server error", error };
     }
-
-    console.log("Successfully stored email data:", data);
   }
+
+  return { message: "Email event type not handled" };
 }
 
 export async function POST(req: NextRequest) {
@@ -238,7 +238,19 @@ export async function POST(req: NextRequest) {
       console.log("User event processed successfully:", result);
       return NextResponse.json({ success: true, ...result });
     } else if (eventType.startsWith("email.")) {
-      await handleEmailEvent(eventType, eventData);
+      const result = await handleEmailEvent(eventType, eventData);
+      if (!result) {
+        return NextResponse.json(
+          { success: false, message: "Failed to process email event" },
+          { status: 500 }
+        );
+      }
+      if (result.message === "Supabase client not initialized") {
+        return NextResponse.json(
+          { success: false, message: result.message },
+          { status: 500 }
+        );
+      }
       return NextResponse.json({ success: true, message: "Email event processed" });
     }
 
