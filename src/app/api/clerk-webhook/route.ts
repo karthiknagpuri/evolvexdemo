@@ -3,6 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 import { Webhook } from "svix";
 import crypto from 'crypto';
 
+// Add runtime configuration to specify this is a Node.js runtime
+export const runtime = 'nodejs';
+
 const isDevelopment = process.env.NODE_ENV === "development";
 const webhookSecret = process.env.CLERK_WEBHOOK_SECRET || "";
 
