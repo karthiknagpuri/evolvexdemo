@@ -1,4 +1,5 @@
-import fetch from 'node-fetch';
+const fetch = require('node-fetch');
+const crypto = require('crypto');
 
 function generateUUID() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -35,12 +36,29 @@ async function testWebhook() {
       type: 'user.created'
     };
     
+    // Get webhook secret from environment or use a default for testing
+    const webhookSecret = process.env.CLERK_WEBHOOK_SECRET || 'whsec_UDHgLh6oNb3FtTIocvQffrXjvsSDonrV';
+    
+    // Generate webhook signature headers
+    const svixId = generateUUID();
+    const svixTimestamp = Date.now().toString();
+    const payloadString = JSON.stringify(payload);
+    
+    // Create signature
+    const signature = crypto
+      .createHmac('sha256', webhookSecret)
+      .update(`${svixId}.${svixTimestamp}.${payloadString}`)
+      .digest('base64');
+    
     const response = await fetch('http://localhost:3000/api/clerk-webhook', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'svix-id': svixId,
+        'svix-timestamp': svixTimestamp,
+        'svix-signature': signature
       },
-      body: JSON.stringify(payload)
+      body: payloadString
     });
     
     const result = await response.json();
