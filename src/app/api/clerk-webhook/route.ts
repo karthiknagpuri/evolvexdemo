@@ -255,11 +255,20 @@ export async function POST(req: NextRequest) {
       console.log("👤 User data:", userData);
 
       try {
+        // Safely extract email address
+        let emailAddress = null;
+        if (userData.email_addresses && Array.isArray(userData.email_addresses) && userData.email_addresses.length > 0) {
+          const primaryEmail = userData.email_addresses[0];
+          if (primaryEmail && typeof primaryEmail === 'object' && 'email_address' in primaryEmail) {
+            emailAddress = primaryEmail.email_address;
+          }
+        }
+
         const { data, error } = await supabase
           .from("profiles")
           .upsert({
             clerk_id: userData.id,
-            email: userData.email_addresses?.[0]?.email_address ?? null,
+            email: emailAddress,
             first_name: userData.first_name ?? "",
             last_name: userData.last_name ?? "",
             updated_at: new Date().toISOString()
