@@ -13,26 +13,21 @@ const isDevelopment = process.env.NODE_ENV === "development";
 const webhookSecret = process.env.CLERK_WEBHOOK_SECRET || "";
 
 // Initialize Supabase client
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+let supabase: ReturnType<typeof createClient> | null = null;
 
-// Log configuration without exposing sensitive data
-console.log("Webhook Configuration:", {
-  environment: process.env.NODE_ENV,
-  hasWebhookSecret: !!webhookSecret,
-  hasSupabaseUrl: !!supabaseUrl,
-  hasServiceRoleKey: !!supabaseServiceRoleKey,
-  webhookSecretLength: webhookSecret.length,
-});
-
-// Initialize Supabase client if environment variables are available
-const supabase = supabaseUrl && supabaseServiceRoleKey ? 
-  createClient(supabaseUrl, supabaseServiceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  }) : null;
+try {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error("Missing Supabase environment variables");
+  } else {
+    supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    );
+    console.log("Supabase client initialized successfully");
+  }
+} catch (error) {
+  console.error("Failed to initialize Supabase client:", error);
+}
 
 // Test Supabase connection
 async function testSupabaseConnection() {
@@ -213,15 +208,22 @@ async function handleEmailEvent(eventType: string, emailData: any) {
 export async function POST(req: NextRequest) {
   console.log("Received webhook request");
 
-  // Check if we're in production and missing required environment variables
-  if (process.env.NODE_ENV === "production" && (!supabaseUrl || !supabaseServiceRoleKey)) {
-    console.error("Missing required environment variables in production");
+  // Check for required environment variables in production
+  if (process.env.NODE_ENV === "production") {
+    if (!process.env.CLERK_WEBHOOK_SECRET) {
+      console.error("Missing CLERK_WEBHOOK_SECRET environment variable");
+      return NextResponse.json(
+        { error: "Server configuration error" },
+        { status: 500 }
+      );
+    }
+  }
+
+  // Check if Supabase is initialized
+  if (!supabase) {
+    console.error("Supabase client not initialized");
     return NextResponse.json(
-      { 
-        success: false, 
-        message: "Server configuration error",
-        error: "Missing required environment variables"
-      },
+      { error: "Database service unavailable" },
       { status: 500 }
     );
   }
