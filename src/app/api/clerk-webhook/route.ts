@@ -10,28 +10,40 @@ const webhookSecret = process.env.CLERK_WEBHOOK_SECRET || "";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// Log configuration without exposing sensitive data
 console.log("Webhook Configuration:", {
   environment: process.env.NODE_ENV,
   hasWebhookSecret: !!webhookSecret,
   hasSupabaseUrl: !!supabaseUrl,
   hasServiceRoleKey: !!supabaseServiceRoleKey,
   webhookSecretLength: webhookSecret.length,
-  supabaseUrl: supabaseUrl
 });
 
+// Validate environment variables
 if (!supabaseUrl || !supabaseServiceRoleKey) {
-  throw new Error("Missing Supabase environment variables");
+  if (isDevelopment) {
+    throw new Error("Missing Supabase environment variables");
+  } else {
+    console.error("Missing Supabase environment variables");
+  }
 }
 
-const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false
-  }
-});
+// Initialize Supabase client if environment variables are available
+const supabase = supabaseUrl && supabaseServiceRoleKey ? 
+  createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  }) : null;
 
 // Test Supabase connection
 async function testSupabaseConnection() {
+  if (!supabase) {
+    console.error("Supabase client not initialized");
+    return false;
+  }
+
   try {
     const { data, error } = await supabase.from("profiles").select("count").limit(1);
     if (error) {
@@ -98,6 +110,11 @@ function generateDeterministicUUID(clerkUserId: string): string {
 
 // Handle user events
 async function handleUserEvent(eventType: string, userData: any) {
+  if (!supabase) {
+    console.error("Supabase client not initialized");
+    return { message: "Supabase client not initialized" };
+  }
+
   console.log("Processing user event:", { eventType, userData });
   
   const { id, email_addresses, username, first_name, last_name, image_url } = userData;
@@ -107,7 +124,7 @@ async function handleUserEvent(eventType: string, userData: any) {
   }
 
   const userProfile = {
-    id, // Use Clerk's ID directly
+    id,
     email: email_addresses?.[0]?.email_address,
     username: username || null,
     full_name: `${first_name || ""} ${last_name || ""}`.trim() || null,
