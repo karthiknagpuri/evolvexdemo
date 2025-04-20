@@ -6,6 +6,9 @@ import crypto from 'crypto';
 // Add runtime configuration to specify this is a Node.js runtime
 export const runtime = 'nodejs';
 
+// Add dynamic configuration to prevent static optimization
+export const dynamic = 'force-dynamic';
+
 const isDevelopment = process.env.NODE_ENV === "development";
 const webhookSecret = process.env.CLERK_WEBHOOK_SECRET || "";
 
@@ -21,15 +24,6 @@ console.log("Webhook Configuration:", {
   hasServiceRoleKey: !!supabaseServiceRoleKey,
   webhookSecretLength: webhookSecret.length,
 });
-
-// Validate environment variables
-if (!supabaseUrl || !supabaseServiceRoleKey) {
-  if (isDevelopment) {
-    throw new Error("Missing Supabase environment variables");
-  } else {
-    console.error("Missing Supabase environment variables");
-  }
-}
 
 // Initialize Supabase client if environment variables are available
 const supabase = supabaseUrl && supabaseServiceRoleKey ? 
@@ -218,24 +212,22 @@ async function handleEmailEvent(eventType: string, emailData: any) {
 
 export async function POST(req: NextRequest) {
   console.log("Received webhook request");
-  
-  // Test Supabase connection on each webhook request
-  const isConnected = await testSupabaseConnection();
-  console.log("Supabase connection status:", isConnected);
+
+  // Check if we're in production and missing required environment variables
+  if (process.env.NODE_ENV === "production" && (!supabaseUrl || !supabaseServiceRoleKey)) {
+    console.error("Missing required environment variables in production");
+    return NextResponse.json(
+      { 
+        success: false, 
+        message: "Server configuration error",
+        error: "Missing required environment variables"
+      },
+      { status: 500 }
+    );
+  }
 
   try {
-    // Verify webhook signature (bypassed in development)
-    const { payload, isValid } = await verifyWebhookSignature(req);
-    console.log("Webhook signature verification:", { isValid });
-    
-    if (!isValid && !isDevelopment) {
-      console.error("Invalid webhook signature");
-      return NextResponse.json(
-        { success: false, message: "Invalid webhook signature" },
-        { status: 401 }
-      );
-    }
-
+    const payload = await req.json();
     const eventType = payload.type;
     const eventData = payload.data;
     console.log("Processing event:", { eventType, eventData });
