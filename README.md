@@ -24,23 +24,36 @@ npm install
 ```
 
 3. Set up environment variables:
-Create a `.env.local` file with:
-```env
-# Clerk Auth
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_publishable_key
-CLERK_SECRET_KEY=your_secret_key
-CLERK_WEBHOOK_SECRET=your_webhook_secret
-
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-```
+   - Copy `.env.example` to `.env.local`:
+   ```bash
+   cp .env.example .env.local
+   ```
+   - Update the values in `.env.local` with your actual credentials:
+     - Get Clerk credentials from [Clerk Dashboard](https://dashboard.clerk.dev/)
+     - Get Supabase credentials from [Supabase Dashboard](https://app.supabase.io/)
 
 4. Run the development server:
 ```bash
 npm run dev
 ```
+
+## Environment Variables
+
+The following environment variables are required:
+
+### Clerk Authentication
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`: Your Clerk publishable key
+- `CLERK_SECRET_KEY`: Your Clerk secret key
+- `CLERK_WEBHOOK_SECRET`: Your Clerk webhook secret
+- `NEXT_PUBLIC_CLERK_SIGN_IN_URL`: Path to sign-in page (default: `/sign-in`)
+- `NEXT_PUBLIC_CLERK_SIGN_UP_URL`: Path to sign-up page (default: `/sign-up`)
+- `NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL`: Redirect path after sign-in (default: `/`)
+- `NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL`: Redirect path after sign-up (default: `/`)
+
+### Supabase
+- `NEXT_PUBLIC_SUPABASE_URL`: Your Supabase project URL
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Your Supabase anonymous key
+- `SUPABASE_SERVICE_ROLE_KEY`: Your Supabase service role key (for webhook handler)
 
 ## Project Structure
 
