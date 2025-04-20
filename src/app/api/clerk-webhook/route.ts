@@ -255,6 +255,15 @@ export async function POST(req: NextRequest) {
       console.log("👤 User data:", userData);
 
       try {
+        // Validate user ID
+        if (!userData.id) {
+          console.error("❌ Missing user ID in webhook payload");
+          return NextResponse.json(
+            { success: false, message: "Missing user ID" },
+            { status: 200 }
+          );
+        }
+
         // Safely extract email address
         let emailAddress = null;
         if (userData.email_addresses && Array.isArray(userData.email_addresses) && userData.email_addresses.length > 0) {
