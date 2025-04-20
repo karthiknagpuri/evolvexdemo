@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { Webhook } from "svix";
 import crypto from 'crypto';
 import { headers } from "next/headers";
-import { WebhookEvent } from "@clerk/nextjs/server";
+import { WebhookEvent, UserJSON } from "@clerk/nextjs/server";
 
 // Add runtime configuration to specify this is a Node.js runtime
 export const runtime = 'nodejs';
@@ -201,84 +201,87 @@ async function handleEmailEvent(eventType: string, emailData: any) {
 }
 
 export async function POST(req: NextRequest) {
-  console.log("Received webhook request");
+  try {
+    // Get the headers
+    const headerPayload = headers();
+    const svix_id = headerPayload.get("svix-id");
+    const svix_timestamp = headerPayload.get("svix-timestamp");
+    const svix_signature = headerPayload.get("svix-signature");
 
-  // Check for required environment variables in production
-  if (process.env.NODE_ENV === "production") {
-    if (!process.env.CLERK_WEBHOOK_SECRET) {
-      console.error("Missing CLERK_WEBHOOK_SECRET environment variable");
+    // If there are no headers, error out
+    if (!svix_id || !svix_timestamp || !svix_signature) {
+      return new Response("Error occurred -- no svix headers", {
+        status: 400
+      });
+    }
+
+    // Get the body
+    const payload = await req.json();
+    console.log("📦 Webhook payload:", payload);
+
+    // Create a new Svix instance with your secret
+    const wh = new Webhook(webhookSecret);
+
+    // Verify the payload with the headers
+    let evt: WebhookEvent;
+    try {
+      evt = wh.verify(JSON.stringify(payload), {
+        "svix-id": svix_id,
+        "svix-timestamp": svix_timestamp,
+        "svix-signature": svix_signature,
+      }) as WebhookEvent;
+    } catch (err) {
+      console.error("Error verifying webhook:", err);
+      return new Response("Error occurred", {
+        status: 400
+      });
+    }
+
+    // Check if Supabase is initialized
+    if (!supabase) {
+      console.error("Supabase client not initialized");
       return NextResponse.json(
-        { error: "Server configuration error" },
+        { success: false, message: "Database service unavailable" },
         { status: 500 }
       );
     }
-  }
 
-  // Check if Supabase is initialized
-  if (!supabase) {
-    console.error("Supabase client not initialized");
-    return NextResponse.json(
-      { error: "Database service unavailable" },
-      { status: 500 }
-    );
-  }
+    // Handle the webhook
+    const eventType = evt.type;
+    console.log(`Processing webhook event: ${eventType}`);
 
-  // Get the headers
-  const headerPayload = headers();
-  const svix_id = headerPayload.get("svix-id");
-  const svix_timestamp = headerPayload.get("svix-timestamp");
-  const svix_signature = headerPayload.get("svix-signature");
-
-  // If there are no headers, error out
-  if (!svix_id || !svix_timestamp || !svix_signature) {
-    return new Response("Error occured -- no svix headers", {
-      status: 400
-    });
-  }
-
-  // Get the body
-  const payload = await req.json();
-  const body = JSON.stringify(payload);
-
-  // Create a new Svix instance with your secret.
-  const wh = new Webhook(webhookSecret);
-
-  let evt: WebhookEvent;
-
-  // Verify the payload with the headers
-  try {
-    evt = wh.verify(body, {
-      "svix-id": svix_id,
-      "svix-timestamp": svix_timestamp,
-      "svix-signature": svix_signature,
-    }) as WebhookEvent;
-  } catch (err) {
-    console.error("Error verifying webhook:", err);
-    return new Response("Error occured", {
-      status: 400
-    });
-  }
-
-  // Handle the webhook
-  const eventType = evt.type;
-  console.log(`Processing webhook event: ${eventType}`);
-
-  try {
     if (eventType.startsWith("user.")) {
-      const result = await handleUserEvent(eventType, evt.data);
-      if (!result) {
+      const userData = evt.data as UserJSON;
+      console.log("👤 User data:", userData);
+
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .upsert({
+            clerk_id: userData.id,
+            email: userData.email_addresses?.[0]?.email_address ?? null,
+            first_name: userData.first_name ?? "",
+            last_name: userData.last_name ?? "",
+            updated_at: new Date().toISOString()
+          });
+
+        if (error) {
+          console.error("🧨 Supabase error:", error);
+          return NextResponse.json(
+            { success: false, message: error.message },
+            { status: 200 }
+          );
+        }
+
+        console.log("✅ Successfully updated user profile:", data);
+        return NextResponse.json({ success: true });
+      } catch (err) {
+        console.error("💥 Internal error:", err);
         return NextResponse.json(
-          { success: false, message: "Failed to process user event" },
-          { status: 500 }
+          { success: false, message: "Internal server error" },
+          { status: 200 }
         );
       }
-      if (result.message === "Supabase client not initialized") {
-        return NextResponse.json(
-          { success: false, message: "Database service unavailable" },
-          { status: 500 }
-        );
-      }
-      return NextResponse.json({ success: true, message: result.message });
     } else if (eventType.startsWith("email.")) {
       const result = await handleEmailEvent(eventType, evt.data);
       if (!result) {
@@ -295,20 +298,13 @@ export async function POST(req: NextRequest) {
       }
       return NextResponse.json({ success: true, message: result.message });
     } else {
-      return NextResponse.json(
-        { success: false, message: `Unsupported event type: ${eventType}` },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: true });
     }
-  } catch (error) {
-    console.error("Error processing webhook:", error);
+  } catch (err) {
+    console.error("💥 Unhandled error:", err);
     return NextResponse.json(
-      { 
-        success: false, 
-        message: "Error processing webhook",
-        error: error instanceof Error ? error.message : "Unknown error"
-      },
-      { status: 500 }
+      { success: false, message: "Internal server error" },
+      { status: 200 }
     );
   }
 } 
