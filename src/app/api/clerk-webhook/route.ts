@@ -273,10 +273,20 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        // Ensure we have a valid user ID before proceeding
+        const userId = userData.id;
+        if (!userId) {
+          console.error("❌ Invalid user ID in webhook payload");
+          return NextResponse.json(
+            { success: false, message: "Invalid user ID" },
+            { status: 200 }
+          );
+        }
+
         const { data, error } = await supabase
           .from("profiles")
           .upsert({
-            clerk_id: userData.id,
+            id: userId, // This is guaranteed to be non-null at this point
             email: emailAddress,
             first_name: userData.first_name ?? "",
             last_name: userData.last_name ?? "",
