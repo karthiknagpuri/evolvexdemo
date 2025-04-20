@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { Webhook } from "svix";
 import crypto from 'crypto';
+import { headers } from "next/headers";
+import { WebhookEvent } from "@clerk/nextjs/server";
 
 // Add runtime configuration to specify this is a Node.js runtime
 export const runtime = 'nodejs';
@@ -10,7 +12,6 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const isDevelopment = process.env.NODE_ENV === "development";
-const webhookSecret = process.env.CLERK_WEBHOOK_SECRET || "";
 
 // Initialize Supabase client
 let supabase: ReturnType<typeof createClient> | null = null;
@@ -42,25 +43,30 @@ try {
 }
 
 // Test Supabase connection
-async function testSupabaseConnection() {
-  if (!supabase) {
-    console.error("Supabase client not initialized");
-    return false;
-  }
-
-  try {
-    const { data, error } = await supabase.from("profiles").select("count").limit(1);
-    if (error) {
-      console.error("Supabase connection test failed:", error);
-      return false;
+if (supabase) {
+  const testConnection = async () => {
+    try {
+      await supabase?.from('profiles').select('count').single();
+      console.log('Supabase connection test successful');
+    } catch (error) {
+      console.error('Supabase connection test failed:', error);
     }
-    console.log("Supabase connection test successful:", data);
-    return true;
-  } catch (error) {
-    console.error("Supabase connection test error:", error);
-    return false;
-  }
+  };
+  void testConnection();
 }
+
+// Get webhook secret from environment variable
+const webhookSecret = process.env.CLERK_WEBHOOK_SECRET || 'whsec_test';
+
+// Log configuration without exposing sensitive data
+console.log("Webhook Configuration:", {
+  environment: process.env.NODE_ENV,
+  hasWebhookSecret: !!webhookSecret,
+  hasSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+  hasServiceRoleKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+  webhookSecretLength: webhookSecret.length,
+  vercelUrl: process.env.VERCEL_URL
+});
 
 // Verify webhook signature
 const verifyWebhookSignature = async (req: NextRequest) => {
@@ -115,57 +121,49 @@ function generateDeterministicUUID(clerkUserId: string): string {
 // Handle user events
 async function handleUserEvent(eventType: string, userData: any) {
   if (!supabase) {
-    console.error("Supabase client not initialized");
     return { message: "Supabase client not initialized" };
   }
 
-  console.log("Processing user event:", { eventType, userData });
-  
-  const { id, email_addresses, username, first_name, last_name, image_url } = userData;
+  const { id, email_addresses, first_name, last_name } = userData;
   
   if (!id) {
     return { message: "User ID is required" };
   }
 
-  const userProfile = {
-    id,
-    email: email_addresses?.[0]?.email_address,
-    username: username || null,
-    full_name: `${first_name || ""} ${last_name || ""}`.trim() || null,
-    avatar_url: image_url || null,
-    updated_at: new Date().toISOString(),
-  };
-
-  console.log("User profile to upsert:", userProfile);
-
-  if (eventType === "user.deleted") {
-    console.log("Deleting user profile:", id);
-    const { error } = await supabase
-      .from("profiles")
-      .delete()
-      .eq("id", id);
-    
-    if (error) {
-      console.error("Error deleting user profile:", error);
-      return { message: "Failed to delete user profile", error };
-    }
-    return { message: "User deleted successfully" };
-  }
-
-  // Handle user.created and user.updated
-  console.log("Upserting user profile:", userProfile);
   try {
+    if (eventType === "user.deleted") {
+      const { error } = await supabase
+        .from("profiles")
+        .delete()
+        .eq("clerk_id", id);
+
+      if (error) {
+        console.error("Error deleting user profile:", error);
+        return { message: "Failed to delete user profile", error };
+      }
+      return { message: "User deleted successfully" };
+    }
+
+    // For user.created and user.updated events
+    const userProfile = {
+      clerk_id: id,
+      email: email_addresses?.[0]?.email_address,
+      first_name: first_name || "",
+      last_name: last_name || "",
+      updated_at: new Date().toISOString()
+    };
+
     const { data, error } = await supabase
       .from("profiles")
       .upsert(userProfile)
       .select()
       .single();
-    
+
     if (error) {
       console.error("Error upserting user profile:", error);
       return { message: "Failed to upsert user profile", error };
     }
-    
+      
     console.log("Successfully upserted user profile:", data);
     return { data, message: "User profile updated successfully" };
   } catch (error) {
@@ -177,44 +175,29 @@ async function handleUserEvent(eventType: string, userData: any) {
 // Handle email-related events
 async function handleEmailEvent(eventType: string, emailData: any) {
   if (!supabase) {
-    console.error("Supabase client not initialized");
     return { message: "Supabase client not initialized" };
   }
 
-  if (eventType === "email.created") {
-    console.log("Processing email event:", {
-      id: emailData.id,
-      to: emailData.to_email_address,
-      subject: emailData.subject,
-      status: emailData.status,
+  try {
+    // Store email data in Supabase
+    const { data, error } = await supabase.from("emails").insert({
+      email_id: emailData.id,
+      user_id: emailData.user_id,
+      to_address: emailData.to_email_address,
+      created_at: new Date(emailData.created_at * 1000).toISOString()
     });
 
-    try {
-      // Store email data in Supabase
-      const { data, error } = await supabase.from("emails").insert({
-        email_id: emailData.id,
-        user_id: emailData.user_id,
-        to_address: emailData.to_email_address,
-        subject: emailData.subject,
-        status: emailData.status,
-        type: emailData.type,
-        created_at: new Date().toISOString(),
-      });
-
-      if (error) {
-        console.error("Error storing email data:", error);
-        return { message: "Failed to store email data", error };
-      }
-
-      console.log("Successfully stored email data:", data);
-      return { data, message: "Email data stored successfully" };
-    } catch (error) {
-      console.error("Error in handleEmailEvent:", error);
-      return { message: "Internal server error", error };
+    if (error) {
+      console.error("Error storing email data:", error);
+      return { message: "Failed to store email data", error };
     }
-  }
 
-  return { message: "Email event type not handled" };
+    console.log("Successfully stored email data:", data);
+    return { data, message: "Email data stored successfully" };
+  } catch (error) {
+    console.error("Error in handleEmailEvent:", error);
+    return { message: "Internal server error", error };
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -240,19 +223,64 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  try {
-    const payload = await req.json();
-    const eventType = payload.type;
-    const eventData = payload.data;
-    console.log("Processing event:", { eventType, eventData });
+  // Get the headers
+  const headerPayload = headers();
+  const svix_id = headerPayload.get("svix-id");
+  const svix_timestamp = headerPayload.get("svix-timestamp");
+  const svix_signature = headerPayload.get("svix-signature");
 
-    // Handle supported events
+  // If there are no headers, error out
+  if (!svix_id || !svix_timestamp || !svix_signature) {
+    return new Response("Error occured -- no svix headers", {
+      status: 400
+    });
+  }
+
+  // Get the body
+  const payload = await req.json();
+  const body = JSON.stringify(payload);
+
+  // Create a new Svix instance with your secret.
+  const wh = new Webhook(webhookSecret);
+
+  let evt: WebhookEvent;
+
+  // Verify the payload with the headers
+  try {
+    evt = wh.verify(body, {
+      "svix-id": svix_id,
+      "svix-timestamp": svix_timestamp,
+      "svix-signature": svix_signature,
+    }) as WebhookEvent;
+  } catch (err) {
+    console.error("Error verifying webhook:", err);
+    return new Response("Error occured", {
+      status: 400
+    });
+  }
+
+  // Handle the webhook
+  const eventType = evt.type;
+  console.log(`Processing webhook event: ${eventType}`);
+
+  try {
     if (eventType.startsWith("user.")) {
-      const result = await handleUserEvent(eventType, eventData);
-      console.log("User event processed successfully:", result);
-      return NextResponse.json({ success: true, ...result });
+      const result = await handleUserEvent(eventType, evt.data);
+      if (!result) {
+        return NextResponse.json(
+          { success: false, message: "Failed to process user event" },
+          { status: 500 }
+        );
+      }
+      if (result.message === "Supabase client not initialized") {
+        return NextResponse.json(
+          { success: false, message: "Database service unavailable" },
+          { status: 500 }
+        );
+      }
+      return NextResponse.json({ success: true, message: result.message });
     } else if (eventType.startsWith("email.")) {
-      const result = await handleEmailEvent(eventType, eventData);
+      const result = await handleEmailEvent(eventType, evt.data);
       if (!result) {
         return NextResponse.json(
           { success: false, message: "Failed to process email event" },
@@ -261,33 +289,24 @@ export async function POST(req: NextRequest) {
       }
       if (result.message === "Supabase client not initialized") {
         return NextResponse.json(
-          { success: false, message: result.message },
+          { success: false, message: "Database service unavailable" },
           { status: 500 }
         );
       }
-      return NextResponse.json({ success: true, message: "Email event processed" });
+      return NextResponse.json({ success: true, message: result.message });
+    } else {
+      return NextResponse.json(
+        { success: false, message: `Unsupported event type: ${eventType}` },
+        { status: 400 }
+      );
     }
-
-    // Skip unsupported events
-    console.log("Skipping unsupported event type:", eventType);
-    return NextResponse.json(
-      { success: true, message: "Event type not handled" },
-      { status: 200 }
-    );
-
   } catch (error) {
-    console.error("Webhook error:", error);
-    const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
-    
+    console.error("Error processing webhook:", error);
     return NextResponse.json(
       { 
         success: false, 
-        message: errorMessage,
-        error: error instanceof Error ? {
-          name: error.name,
-          message: error.message,
-          stack: process.env.NODE_ENV === "development" ? error.stack : undefined
-        } : error
+        message: "Error processing webhook",
+        error: error instanceof Error ? error.message : "Unknown error"
       },
       { status: 500 }
     );
